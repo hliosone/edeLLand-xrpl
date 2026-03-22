@@ -58,7 +58,7 @@ export function createRequest({ loanRequestId, userAddress, xrpDrops, loanAmount
     userAddress,
     xrpDrops:        String(xrpDrops),
     loanAmountRLUSD: String(loanAmountRLUSD),
-    status:          "pending_multisig",
+    status:          "pending_deposit",
     depositTxHash:   null,
     loanId:          null,
     multisigDone:    false,

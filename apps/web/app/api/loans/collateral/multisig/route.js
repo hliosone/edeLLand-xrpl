@@ -12,14 +12,14 @@
  * the borrower's wallet if ever needed (e.g., emergency enforcement).
  *
  * Body:    { borrowerAddress: string, loanRequestId: string }
- * Returns: { txBlob: hex }  — ready for walletManager.sign() in Xaman
+ * Returns: { txJson: object }  — ready for walletManager.signAndSubmit(txJson) in Xaman
  *
  * After user signs → call POST /api/loans/collateral/multisig/confirm
  * (same route, action: "confirm") to mark multisigDone in the store.
  */
 
 import { NextResponse }       from "next/server";
-import { Client, encode }     from "xrpl";
+import { Client }             from "xrpl";
 import { confirmMultisig }    from "../../../../../lib/collateral-store.js";
 
 export async function POST(request) {
@@ -65,10 +65,9 @@ export async function POST(request) {
         ],
       };
 
-      const prepared = await client.autofill(tx);
-      const txBlob   = encode(prepared);
+      const txJson = await client.autofill(tx);
 
-      return NextResponse.json({ txBlob });
+      return NextResponse.json({ txJson });
     } finally {
       await client.disconnect();
     }

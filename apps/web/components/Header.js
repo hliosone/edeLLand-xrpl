@@ -7,14 +7,15 @@ import { useWallet } from "./providers/WalletProvider";
 import { useWalletManager } from "../hooks/useWalletManager";
 
 const NAV_LINKS = [
-  { href: "/account",    label: "Account",    auth: true  },
-  { href: "/loans",      label: "Loans",      auth: true  },
-  { href: "/yield",      label: "Yield",      auth: true  },
-  { href: "/onboarding", label: "KYC",        auth: false },
-  { href: "/admin",      label: "Admin",      auth: false },
+  { href: "/account",    label: "Account",       auth: true  },
+  { href: "/loans",      label: "Loans",         auth: true  },
+  { href: "/yield",      label: "Yield",         auth: true  },
+  { href: "/shop",       label: "Partner Shop",  auth: false },
+  { href: "/onboarding", label: "KYC",           auth: false },
+  { href: "/admin",      label: "Admin",         auth: false },
 ];
 
-const HIDDEN_PATHS = ["/shop", "/checkout"];
+const HIDDEN_PATHS = ["/checkout"];
 
 export function Header() {
   useWalletManager();

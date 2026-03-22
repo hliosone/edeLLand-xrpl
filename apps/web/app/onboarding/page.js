@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 import { useWallet } from "../../components/providers/WalletProvider";
 import { startVerification, watchVerification } from "../../scripts/edel-id/verification";
-import { ArrowRight, CheckCircle2, Loader2, ShieldCheck, Zap } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Loader2, ShieldCheck, Zap } from "lucide-react";
 
 // ── States ────────────────────────────────────────────────────────────────────
 
@@ -132,6 +132,9 @@ function OnboardingInner() {
   const [error,        setError]        = useState(null);
   const [amlBlock,     setAmlBlock]     = useState(null); // { label, source } when AML-blocked
   const [issuedTier,   setIssuedTier]   = useState(null); // { issuer, credentialType }
+  const [ofacStatus,   setOfacStatus]   = useState("idle");   // "idle" | "checking" | "blocked" | "clear"
+  const [ofacInfo,     setOfacInfo]     = useState(null);     // { label, source } when blocked
+  const [revokeStatus, setRevokeStatus] = useState("idle");   // "idle" | "revoking" | "done" | "failed"
 
   const address = accountInfo?.address;
 
@@ -154,6 +157,34 @@ function OnboardingInner() {
         else if (accepted.has("KYC_TIER0")) setExistingTier("KYC_TIER0");
       })
       .catch(() => setExistingKyc(null));
+  }, [address]);
+
+  // ── OFAC / AML check on mount — runs as soon as address is known ──────────
+
+  useEffect(() => {
+    if (!address) return;
+    setOfacStatus("checking");
+    fetch(`/api/ofac/check?address=${encodeURIComponent(address)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.blocked) {
+          setOfacInfo({ label: data.label, source: data.source });
+          setOfacStatus("blocked");
+          // Auto-revoke all platform credentials
+          setRevokeStatus("revoking");
+          fetch("/api/credential/revoke", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ subjectAddress: address }),
+          })
+            .then(r => r.json())
+            .then(d => setRevokeStatus(d.allOk || d.revoked?.length === 0 ? "done" : "failed"))
+            .catch(() => setRevokeStatus("failed"));
+        } else {
+          setOfacStatus("clear");
+        }
+      })
+      .catch(() => setOfacStatus("clear")); // fail open — don't block on API error
   }, [address]);
 
   // ── Tier-only update (skip Edel-ID, go straight to income selection) ──────
@@ -325,6 +356,98 @@ function OnboardingInner() {
   const acceptDone = step === S.DONE;
 
   // ── Not connected ─────────────────────────────────────────────────────────
+
+  if (isConnected && ofacStatus === "checking") {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="glass rounded-2xl p-10 text-center max-w-sm mx-4">
+          <Loader2 className="h-7 w-7 animate-spin mx-auto mb-4" style={{ color: "#00d4ff" }} />
+          <p style={{ color: "rgba(241,245,249,0.5)", fontSize: "13px" }}>Screening wallet address…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isConnected && ofacStatus === "blocked") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center px-4">
+        <div
+          className="w-full max-w-lg rounded-2xl p-8 space-y-6"
+          style={{
+            background: "rgba(239,68,68,0.08)",
+            border: "2px solid rgba(239,68,68,0.55)",
+          }}
+        >
+          {/* Icon + title */}
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div
+              className="flex h-16 w-16 items-center justify-center rounded-2xl"
+              style={{ background: "rgba(239,68,68,0.15)", border: "1.5px solid rgba(239,68,68,0.4)" }}
+            >
+              <AlertTriangle className="h-8 w-8" style={{ color: "#ef4444" }} />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold" style={{ color: "#f87171" }}>
+                Access Denied — OFAC / AML Sanction
+              </h2>
+              <p className="mt-1" style={{ color: "rgba(248,113,113,0.7)", fontSize: "13px", lineHeight: 1.6 }}>
+                This wallet address appears on the sanctions list. KYC onboarding is not available.
+              </p>
+            </div>
+          </div>
+
+          {/* Sanction details */}
+          {ofacInfo?.label && (
+            <div
+              className="rounded-xl px-4 py-3 space-y-1"
+              style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.25)" }}
+            >
+              <p style={{ color: "rgba(241,245,249,0.35)", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
+                {ofacInfo.source ?? "OFAC"}
+              </p>
+              <p style={{ color: "rgba(241,245,249,0.6)", fontSize: "12.5px", fontFamily: "monospace" }}>
+                {ofacInfo.label}
+              </p>
+            </div>
+          )}
+
+          {/* Address */}
+          <div
+            className="rounded-xl px-4 py-3"
+            style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.07)" }}
+          >
+            <p style={{ color: "rgba(241,245,249,0.3)", fontSize: "11px", marginBottom: "4px" }}>Wallet address</p>
+            <code style={{ color: "rgba(241,245,249,0.55)", fontSize: "11.5px", fontFamily: "monospace", wordBreak: "break-all" }}>
+              {address}
+            </code>
+          </div>
+
+          {/* Revocation status */}
+          <div
+            className="rounded-xl px-4 py-3 flex items-center gap-3"
+            style={{
+              background: revokeStatus === "done" ? "rgba(239,68,68,0.06)" : "rgba(255,255,255,0.02)",
+              border: "1px solid rgba(255,255,255,0.07)",
+            }}
+          >
+            {revokeStatus === "revoking" && <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: "#f87171" }} />}
+            {revokeStatus === "done"     && <CheckCircle2 className="h-4 w-4 shrink-0" style={{ color: "#f87171" }} />}
+            {revokeStatus === "failed"   && <AlertTriangle className="h-4 w-4 shrink-0" style={{ color: "#fb923c" }} />}
+            <p style={{ fontSize: "12px", color: "rgba(241,245,249,0.4)" }}>
+              {revokeStatus === "idle"     && "Checking issued credentials…"}
+              {revokeStatus === "revoking" && "Revoking platform credentials…"}
+              {revokeStatus === "done"     && "All platform credentials have been revoked."}
+              {revokeStatus === "failed"   && "Credential revocation encountered an error — contact support."}
+            </p>
+          </div>
+
+          <p style={{ color: "rgba(241,245,249,0.25)", fontSize: "11.5px", textAlign: "center", lineHeight: 1.6 }}>
+            If you believe this is an error, please contact support with your wallet address.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isConnected) {
     return (

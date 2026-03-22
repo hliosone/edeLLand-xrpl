@@ -30,7 +30,7 @@ function fmtDate(ts) {
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 
-const STEPS = ["Eligibility", "Amount", "Co-sign", "Collateral", "Loan"];
+const STEPS = ["Eligibility", "Amount", "Collateral", "Loan"];
 
 function StepBar({ current }) {
   return (
@@ -219,6 +219,7 @@ function StepAmount({ address, onNext }) {
               ["Monthly payment",     `${monthlyPayment} RLUSD`],
               ["XRP price (oracle)",  `$${quote.xrpUsd?.toFixed(4)}`],
               ["Collateral required", <strong>{parseFloat(quote.xrpRequired).toFixed(4)} XRP</strong>],
+              ["Interest rate",       <span style={{ color: "#00d4ff" }}>{quote.interestRatePct?.toFixed(2) ?? "—"}% p.a. (dynamic)</span>],
               ["Initial health",      <Badge variant="success">125.00%</Badge>],
               ["Warning below",       `${process.env.NEXT_PUBLIC_COLLATERAL_WARNING_THRESHOLD ?? 120}%`],
               ["Liquidation below",   `${process.env.NEXT_PUBLIC_COLLATERAL_LIQUIDATION_THRESHOLD ?? 112}%`],
@@ -232,7 +233,7 @@ function StepAmount({ address, onNext }) {
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => setQuote(null)} className="flex-1">Change amount</Button>
             <Button onClick={() => onNext(quote)} className="flex-1">
-              {quote.needsMultisigSetup ? "Set up co-signing →" : "Deposit collateral →"}
+              Deposit collateral →
             </Button>
           </div>
         </div>
@@ -241,97 +242,7 @@ function StepAmount({ address, onNext }) {
   );
 }
 
-// ── Step 3 — Multi-sig setup ──────────────────────────────────────────────────
-
-function StepMultisig({ address, quote, onNext }) {
-  const { walletManager } = useWallet();
-  const [loading,  setLoading]  = useState(false);
-  const [done,     setDone]     = useState(false);
-  const [error,    setError]    = useState(null);
-
-  async function handleSetup() {
-    setLoading(true);
-    setError(null);
-    try {
-      // 1. Get the SignerListSet txBlob from backend
-      const prepRes = await fetch("/api/loans/collateral/multisig", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ borrowerAddress: address, loanRequestId: quote.loanRequestId }),
-      });
-      const prepData = await prepRes.json();
-      if (!prepRes.ok) throw new Error(prepData.error);
-
-      // 2. User signs via Xaman
-      await walletManager.signAndSubmit({ txblob: prepData.txBlob });
-
-      // 3. Confirm multisig in store
-      await fetch("/api/loans/collateral/multisig", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ action: "confirm", loanRequestId: quote.loanRequestId }),
-      });
-
-      setDone(true);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="space-y-5">
-      <div>
-        <h2 className="text-lg font-semibold">Co-signing setup</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          One-time setup. You'll sign a <code className="text-xs bg-muted px-1 rounded">SignerListSet</code> that
-          adds the platform as co-signer on your wallet, giving it enforcement rights over your collateral.
-        </p>
-      </div>
-
-      <div className="rounded-md bg-muted/50 px-4 py-4 space-y-3 text-sm">
-        <p className="font-medium">What you're signing</p>
-        <div className="divide-y border rounded-md">
-          {[
-            ["Transaction type",  "SignerListSet"],
-            ["Account",           <span className="font-mono text-xs">{address}</span>],
-            ["SignerQuorum",      "2 (platform can act alone)"],
-            ["Platform signer",   "Weight 2 — dominant"],
-            ["Your weight",       "Weight 1 — co-guardian"],
-            ["Master key",        "Not disabled — Xaman still works normally"],
-          ].map(([k, v]) => (
-            <div key={k} className="flex items-center justify-between px-3 py-2 text-xs">
-              <span className="text-muted-foreground">{k}</span>
-              <span>{v}</span>
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          This lets the platform enforce liquidation if your collateral health drops too low.
-          Your Xaman wallet continues to work for regular transactions.
-        </p>
-      </div>
-
-      {error && <p className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">{error}</p>}
-
-      {!done ? (
-        <Button onClick={handleSetup} disabled={loading} className="w-full">
-          {loading ? "Waiting for Xaman signature…" : "Sign co-signing setup in Xaman"}
-        </Button>
-      ) : (
-        <div className="space-y-3">
-          <div className="rounded-md bg-green-500/10 border border-green-500/30 px-4 py-3 text-sm text-green-700 dark:text-green-400">
-            Co-signing configured. The platform is now weight-2 co-signer on your wallet.
-          </div>
-          <Button onClick={onNext} className="w-full">Deposit collateral →</Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Step 4 — Collateral deposit ───────────────────────────────────────────────
+// ── Step 3 — Collateral deposit ───────────────────────────────────────────────
 
 function StepDeposit({ address, quote, onNext }) {
   const { walletManager } = useWallet();
@@ -341,32 +252,21 @@ function StepDeposit({ address, quote, onNext }) {
 
   const xrpAmount = parseFloat(quote.xrpRequired).toFixed(4);
 
-  // Encode loanRequestId as hex for the Memo field
-  const memoHex = Buffer.from(quote.loanRequestId, "utf8").toString("hex").toUpperCase();
-
   async function handleDeposit() {
     setLoading(true);
     setError(null);
     try {
-      // 1. User sends XRP → escrow via Xaman
       const tx = {
         TransactionType: "Payment",
         Account:         address,
         Destination:     quote.escrowAddress,
         Amount:          quote.xrpDropsRequired,
-        Memos: [{
-          Memo: {
-            MemoType: Buffer.from("collateral/loanRequestId", "utf8").toString("hex").toUpperCase(),
-            MemoData: memoHex,
-          },
-        }],
       };
 
       const result = await walletManager.signAndSubmit(tx);
-      const hash   = result?.hash ?? result?.result?.hash;
+      const hash   = result?.hash;
       if (!hash) throw new Error("No transaction hash returned from Xaman.");
 
-      // 2. Confirm deposit on-chain
       const confRes = await fetch("/api/loans/collateral/confirm-deposit", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -388,17 +288,16 @@ function StepDeposit({ address, quote, onNext }) {
       <div>
         <h2 className="text-lg font-semibold">Deposit collateral</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Send <strong>{xrpAmount} XRP</strong> to the platform escrow wallet via Xaman.
-          The XRP stays locked until your loan is fully repaid.
+          Send <strong>{xrpAmount} XRP</strong> to the platform collateral wallet.
+          This XRP covers your loan — it is returned on full repayment or used on liquidation.
         </p>
       </div>
 
       <div className="divide-y border rounded-md text-sm">
         {[
-          ["Destination",       <span className="font-mono text-xs">{quote.escrowAddress}</span>],
-          ["Amount",            <strong>{xrpAmount} XRP</strong>],
-          ["Drops",             quote.xrpDropsRequired],
-          ["Memo (auto-set)",   <span className="font-mono text-xs truncate max-w-[200px]">{quote.loanRequestId}</span>],
+          ["Destination",  <span className="font-mono text-xs">{quote.escrowAddress}</span>],
+          ["Amount",       <strong>{xrpAmount} XRP</strong>],
+          ["Drops",        quote.xrpDropsRequired],
         ].map(([k, v]) => (
           <div key={k} className="flex items-center justify-between px-4 py-2.5">
             <span className="text-muted-foreground">{k}</span>
@@ -411,7 +310,7 @@ function StepDeposit({ address, quote, onNext }) {
 
       {!txHash ? (
         <Button onClick={handleDeposit} disabled={loading} className="w-full">
-          {loading ? "Waiting for Xaman…" : `Send ${xrpAmount} XRP via Xaman`}
+          {loading ? "Waiting for Xaman…" : `Send ${xrpAmount} XRP collateral via Xaman`}
         </Button>
       ) : (
         <div className="space-y-3">
@@ -430,9 +329,10 @@ function StepDeposit({ address, quote, onNext }) {
 
 function StepCreateLoan({ address, quote, onNext }) {
   const { walletManager } = useWallet();
-  const [loading,  setLoading]  = useState(false);
-  const [result,   setResult]   = useState(null);
-  const [error,    setError]    = useState(null);
+  const [loading,      setLoading]      = useState(false);
+  const [result,       setResult]       = useState(null);
+  const [error,        setError]        = useState(null);
+  const [interestRate, setInterestRate] = useState(null); // % from API
 
   async function handleCreate() {
     setLoading(true);
@@ -446,10 +346,11 @@ function StepCreateLoan({ address, quote, onNext }) {
       });
       const prepData = await prepRes.json();
       if (!prepRes.ok) throw new Error(prepData.error);
+      if (prepData.interestRatePct != null) setInterestRate(prepData.interestRatePct);
 
-      // 2. User signs via Xaman
-      const signResult = await walletManager.sign({ txblob: prepData.txBlob });
-      const signedBlob = signResult?.signed_tx_blob ?? signResult?.tx_blob ?? signResult;
+      // 2. User signs via Xaman (txjson — avoids JWT txblob permission error)
+      const signResult = await walletManager.sign(prepData.txJson);
+      const signedBlob = signResult?.tx_blob ?? signResult?.hex_blob;
       if (!signedBlob) throw new Error("No signed blob returned from Xaman.");
 
       // 3. Broker countersigns + submits
@@ -514,10 +415,11 @@ function StepCreateLoan({ address, quote, onNext }) {
         <p className="font-medium">Summary</p>
         <div className="grid grid-cols-2 gap-y-2 text-xs">
           {[
-            ["Borrow",     `${parseFloat(quote.loanAmountRLUSD ?? 0).toFixed(2)} RLUSD`],
-            ["Receive",    `${(parseFloat(quote.loanAmountRLUSD ?? 0) * 0.92).toFixed(2)} RLUSD`],
-            ["Collateral", `${parseFloat(quote.xrpRequired ?? 0).toFixed(4)} XRP locked`],
-            ["Oracle",     `$${quote.xrpUsd?.toFixed(4)} / XRP`],
+            ["Borrow",        `${parseFloat(quote.loanAmountRLUSD ?? 0).toFixed(2)} RLUSD`],
+            ["Receive",       `${(parseFloat(quote.loanAmountRLUSD ?? 0) * 0.92).toFixed(2)} RLUSD`],
+            ["Interest rate", interestRate != null ? `${interestRate.toFixed(2)}% p.a. (dynamic)` : "loading…"],
+            ["Collateral",    `${parseFloat(quote.xrpRequired ?? 0).toFixed(4)} XRP locked`],
+            ["Oracle",        `$${quote.xrpUsd?.toFixed(4)} / XRP`],
           ].map(([k, v]) => (
             <div key={k}>
               <p className="text-muted-foreground">{k}</p>
@@ -557,7 +459,7 @@ export default function NewCollateralLoanPage() {
 
   function handleAmountNext(quoteData) {
     setQuote(quoteData);
-    setStep(quoteData.needsMultisigSetup ? 3 : 4);
+    setStep(3); // always go straight to deposit (no multisig step)
   }
 
   return (
@@ -591,12 +493,9 @@ export default function NewCollateralLoanPage() {
               <StepAmount address={address} onNext={handleAmountNext} />
             )}
             {step === 3 && quote && (
-              <StepMultisig address={address} quote={quote} onNext={() => setStep(4)} />
+              <StepDeposit address={address} quote={quote} onNext={() => setStep(4)} />
             )}
             {step === 4 && quote && (
-              <StepDeposit address={address} quote={quote} onNext={() => setStep(5)} />
-            )}
-            {step === 5 && quote && (
               <StepCreateLoan address={address} quote={quote} onNext={() => router.push("/loans")} />
             )}
           </div>

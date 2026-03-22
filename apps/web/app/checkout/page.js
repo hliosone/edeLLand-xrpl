@@ -90,7 +90,7 @@ function CheckoutInner() {
     setState(S.CONFIRMING);
     setError(null);
     try {
-      // Step 1 — prepare unsigned LoanSet
+      // Step 1 — prepare unsigned LoanSet (returns encoded txBlob)
       const prepRes  = await fetch("/api/loans/prepare", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -99,10 +99,11 @@ function CheckoutInner() {
       const prepData = await prepRes.json();
       if (!prepRes.ok || !prepData.txBlob) throw new Error(prepData.error ?? "Loan preparation failed");
 
-      // Step 2 — user signs via XUMM using txblob mode (bypasses field validator
-      // that rejects unknown XLS-66 fields like LoanBrokerID, Counterparty, etc.)
+      // Step 2 — user signs via Xaman in txblob mode.
+      // Passing { txblob } bypasses Xaman's codec so it signs raw bytes without
+      // trying to decode LoanSet (unknown tx type in Xaman's binary codec).
       const signResult = await walletManager.sign({ txblob: prepData.txBlob });
-      const signedBlob = signResult.tx_blob;
+      const signedBlob = signResult?.tx_blob ?? signResult?.hex_blob;
 
       // Step 3 — broker adds CounterpartySignature + submit
       const res  = await fetch("/api/loans/create", {
@@ -377,7 +378,7 @@ function CheckoutInner() {
             <div className="flex flex-col items-center gap-3 py-8">
               <Loader2 className="h-8 w-8 animate-spin" style={{ color: "#7c3aed" }} />
               <p style={{ color: "rgba(241,245,249,0.75)", fontSize: "13px", fontWeight: 500 }}>Sign with your wallet...</p>
-              <p style={{ color: "rgba(241,245,249,0.35)", fontSize: "12px" }}>Sign the LoanSet in XUMM, then the broker countersigns</p>
+              <p style={{ color: "rgba(241,245,249,0.35)", fontSize: "12px" }}>Broker pre-signed · Sign the LoanSet in Xaman to finalize</p>
             </div>
           )}
 

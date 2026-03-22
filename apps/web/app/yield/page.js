@@ -416,12 +416,12 @@ function MyPosition({ vault, position }) {
               {fmtVal(stats.userValue)}
             </p>
             <p style={{ color: "rgba(241,245,249,0.3)", fontSize: "12px", marginTop: "4px" }}>
-              {stats.shareRatio > 0 ? `${(stats.shareRatio * 100).toFixed(4)} % of pool` : ""}
+              {stats.shareRatio > 0 ? `${(stats.shareRatio * 100).toFixed(2)} % of pool` : ""}
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-4">
-            <StatBox label="Pool share"  value={`${(stats.shareRatio * 100).toFixed(4)} %`} color="#7c3aed" />
+            <StatBox label="Pool share"  value={`${(stats.shareRatio * 100).toFixed(2)} %`} color="#7c3aed" />
             <StatBox label="Current APY" value={stats.apy > 0 ? `${(stats.apy * 100).toFixed(2)} %` : "0.00 %"} color="#10b981" />
           </div>
         </>

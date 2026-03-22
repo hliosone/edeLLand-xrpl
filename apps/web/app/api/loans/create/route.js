@@ -20,10 +20,9 @@ function roundUpByScale(value, loanScale) {
 // Returns: { ok, hash, loanId, periodicPayment, nextPaymentDueDate, paymentsTotal }
 //
 // Flow:
-//  1. Frontend calls /api/loans/prepare → unsigned LoanSet tx
-//  2. User signs via walletManager.sign() (XUMM) → signed blob (TxnSignature)
-//  3. This endpoint receives the signed blob, broker adds CounterpartySignature,
-//     and submits to XRPL.
+//  1. /api/loans/prepare → encoded txBlob (unsigned LoanSet)
+//  2. User signs via Xaman txblob mode (adds TxnSignature) → signedBlob
+//  3. Broker adds CounterpartySignature via signLoanSetByCounterparty → submit.
 
 export async function POST(request) {
   try {
@@ -36,13 +35,13 @@ export async function POST(request) {
       );
     }
 
-    const brokerSeed   = process.env.PLATFORM_BROKER_WALLET_SEED;
+    const brokerSeed   = process.env.LOAN_BROKER_WALLET_SEED ?? process.env.PLATFORM_ISSUER_WALLET_SEED;
     const loanBrokerId = process.env.LOAN_BROKER_ID;
     const endpoint     = process.env.XRPL_NETWORK_ENDPOINT ?? "wss://s.devnet.rippletest.net:51233";
 
     if (!brokerSeed || !loanBrokerId) {
       return NextResponse.json(
-        { error: "Backend not configured — PLATFORM_BROKER_WALLET_SEED or LOAN_BROKER_ID missing." },
+        { error: "Backend not configured — LOAN_BROKER_WALLET_SEED or LOAN_BROKER_ID missing." },
         { status: 500 }
       );
     }

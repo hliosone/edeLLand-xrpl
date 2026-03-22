@@ -11,9 +11,10 @@
  * Returns: { loanRequestId, xrpDropsRequired, xrpRequired, xrpUsd, escrowAddress, needsMultisigSetup }
  */
 
-import { NextResponse }                       from "next/server";
-import { Client }                             from "xrpl";
-import { createRequest, hasMultisigSetup }    from "../../../../../lib/collateral-store.js";
+import { NextResponse }    from "next/server";
+import { Client }          from "xrpl";
+import crypto              from "crypto";
+import { createRequest }   from "../../../../../lib/collateral-store.js";
 
 const CRED_KYC_FULL   = "4B59435F46554C4C";
 const CRED_KYC_OVER18 = "4B59435F4F5645523138";
@@ -21,7 +22,9 @@ const CRED_TIER1      = "4B59435F5449455231";
 const CRED_TIER2      = "4B59435F5449455232";
 const TIER_MAX        = { [CRED_TIER2]: 2000, [CRED_TIER1]: 500 };
 
-const COLLATERAL_RATIO = 1.25; // borrower must lock 125% of loan value in XRP
+const COLLATERAL_RATIO   = 1.25;  // borrower must lock 125% of loan value in XRP
+const BASE_INTEREST_RATE = 30_000;  // 3% annual in 1/10 bps
+const MAX_INTEREST_RATE  = 200_000; // 20% annual in 1/10 bps
 
 export async function POST(request) {
   try {
@@ -32,11 +35,12 @@ export async function POST(request) {
       return NextResponse.json({ error: "borrowerAddress and loanAmountRLUSD required" }, { status: 400 });
     }
 
-    const endpoint      = process.env.XRPL_NETWORK_ENDPOINT ?? "wss://s.devnet.rippletest.net:51233";
-    const escrowAddress = process.env.COLLATERAL_ESCROW_WALLET_ADDRESS;
-    const oracleAccount = process.env.NEXT_PUBLIC_ORACLE_ADDRESS;
-    const oracleDocId   = parseInt(process.env.NEXT_PUBLIC_ORACLE_DOCUMENT_ID ?? "1", 10);
+    const endpoint       = process.env.XRPL_NETWORK_ENDPOINT ?? "wss://s.devnet.rippletest.net:51233";
+    const escrowAddress  = process.env.COLLATERAL_ESCROW_WALLET_ADDRESS;
+    const oracleAccount  = process.env.NEXT_PUBLIC_ORACLE_ADDRESS;
+    const oracleDocId    = parseInt(process.env.NEXT_PUBLIC_ORACLE_DOCUMENT_ID ?? "1", 10);
     const platformIssuer = process.env.PLATFORM_ISSUER_WALLET_ADDRESS;
+    const vaultId        = process.env.PERMISSIONED_VAULT_ID;
 
     if (!escrowAddress) {
       return NextResponse.json(
@@ -110,7 +114,23 @@ export async function POST(request) {
       const xrpRequired      = (principal * COLLATERAL_RATIO) / xrpUsd;           // in XRP
       const xrpDropsRequired = String(Math.ceil(xrpRequired * 1_000_000));         // ceil to drops
 
-      // ── 5. Create store entry ─────────────────────────────────────────────
+      // ── 5. Fetch vault utilization → dynamic interest rate preview ─────────
+      let dynamicInterestRate = BASE_INTEREST_RATE;
+      if (vaultId) {
+        try {
+          const vaultEntry = await client.request({ command: "ledger_entry", index: vaultId, ledger_index: "validated" });
+          const vault = vaultEntry.result.node;
+          const assetsTotal     = parseFloat(vault.AssetsTotal?.value     ?? vault.AssetsTotal     ?? "0");
+          const assetsAvailable = parseFloat(vault.AssetsAvailable?.value ?? vault.AssetsAvailable ?? "0");
+          if (assetsTotal > 0) {
+            const utilization = Math.max(0, Math.min(1, 1 - assetsAvailable / assetsTotal));
+            dynamicInterestRate = Math.round(BASE_INTEREST_RATE + utilization * (MAX_INTEREST_RATE - BASE_INTEREST_RATE));
+          }
+        } catch { /* keep base rate */ }
+      }
+      const interestRatePct = dynamicInterestRate / 10_000; // e.g. 30,000 → 3.0 (%)
+
+      // ── 6. Create store entry ─────────────────────────────────────────────
       const loanRequestId = crypto.randomUUID();
       createRequest({
         loanRequestId,
@@ -122,10 +142,10 @@ export async function POST(request) {
       return NextResponse.json({
         loanRequestId,
         xrpDropsRequired,
-        xrpRequired:        xrpRequired.toFixed(6),
+        xrpRequired:    xrpRequired.toFixed(6),
         xrpUsd,
         escrowAddress,
-        needsMultisigSetup: !hasMultisigSetup(borrowerAddress),
+        interestRatePct,
       });
     } finally {
       await client.disconnect();

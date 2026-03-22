@@ -13,14 +13,18 @@ const TIER_MAX      = { [CRED_TIER2]: 2000, [CRED_TIER1]: 500 };
 // Borrower receives principal × 0.92, repays principal in 3 equal installments.
 
 const ORIGINATION_FEE_RATE = 0.08;   // 8% flat fee on principal
-const LATE_INTEREST_RATE   = 50_000; // 5% annual penalty on overdue balance
+const LATE_INTEREST_RATE   = 50_000; // 5% annual penalty on overdue balance (in 1/10 bps)
 const PAYMENT_TOTAL        = 3;
 const PAYMENT_INTERVAL     = 300;    // 5 minutes (devnet demo)
 const GRACE_PERIOD         = 60;     // 1 min (minimum; must be ≤ PaymentInterval)
 
 // ── POST /api/loans/prepare ───────────────────────────────────────────────────
 // Body:    { principalRLUSD: string, borrowerAddress: string }
-// Returns: { tx: object } — prepared LoanSet ready for borrower signing
+// Returns: { txBlob: string } — autofilled LoanSet encoded as hex blob.
+//
+// We return a txblob instead of txjson so Xaman signs the raw bytes without
+// trying to decode the transaction with its own codec (which doesn't know LoanSet).
+// Signing order: borrower (Xaman, txblob mode) → broker countersigns in /api/loans/create.
 
 export async function POST(request) {
   try {
@@ -31,13 +35,14 @@ export async function POST(request) {
       return NextResponse.json({ error: "principalRLUSD and borrowerAddress required" }, { status: 400 });
     }
 
-    const brokerSeed   = process.env.PLATFORM_BROKER_WALLET_SEED;
+    // LoanBroker is owned by PLATFORM_ISSUER — use LOAN_BROKER_WALLET_SEED (written as alias)
+    const brokerSeed   = process.env.LOAN_BROKER_WALLET_SEED ?? process.env.PLATFORM_ISSUER_WALLET_SEED;
     const loanBrokerId = process.env.LOAN_BROKER_ID;
     const endpoint     = process.env.XRPL_NETWORK_ENDPOINT ?? "wss://s.devnet.rippletest.net:51233";
 
     if (!brokerSeed || !loanBrokerId) {
       return NextResponse.json(
-        { error: "Backend not configured — PLATFORM_BROKER_WALLET_SEED or LOAN_BROKER_ID missing. Run lending setup scripts first." },
+        { error: "Backend not configured — LOAN_BROKER_WALLET_SEED or LOAN_BROKER_ID missing. Run lending setup scripts first." },
         { status: 500 }
       );
     }
@@ -78,8 +83,9 @@ export async function POST(request) {
         );
       }
 
-      // ── 2. Build LoanSet: Account = Borrower, Counterparty = Broker ─────────
-      const originationFee = String(Math.round(principal * ORIGINATION_FEE_RATE * 100) / 100);
+      // ── 3. Build LoanSet — PrincipalRequested / LoanOriginationFee are STNumber
+      //    (XLS-66 type = 64-bit IEEE double encoded as decimal string, not IOU object)
+      const originationFeeValue = String(Math.round(principal * ORIGINATION_FEE_RATE));
 
       const loanSetBase = {
         TransactionType:    "LoanSet",
@@ -89,18 +95,20 @@ export async function POST(request) {
         PrincipalRequested: String(principal),
         InterestRate:       0,
         LateInterestRate:   LATE_INTEREST_RATE,
-        LoanOriginationFee: originationFee,
+        LoanOriginationFee: originationFeeValue,
         PaymentTotal:       PAYMENT_TOTAL,
         PaymentInterval:    PAYMENT_INTERVAL,
         GracePeriod:        GRACE_PERIOD,
       };
 
-      // Autofill (fee, sequence, last ledger sequence)
-      const prepared = await client.autofill(loanSetBase);
+      // ── 3. Autofill (fee, sequence, last ledger sequence) ────────────────────
+      const txJson = await client.autofill(loanSetBase);
 
-      // Encode to hex so XUMM receives a txblob payload — bypasses
-      // the payload validator that rejects unknown XLS-66 fields.
-      const txBlob = encode(prepared);
+      // ── 4. Encode to blob — bypass Xaman's codec for unknown tx types ────────
+      // Xaman doesn't know LoanSet field definitions → passing txjson causes
+      // "invalid signature" in Xaman's signing flow. Passing a pre-encoded txblob
+      // tells Xaman to sign raw bytes without decoding.
+      const txBlob = encode(txJson);
 
       return NextResponse.json({ txBlob });
     } finally {

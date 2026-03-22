@@ -146,12 +146,6 @@ function CollateralHealthBadge({ loanId, healthData }) {
 
 const RIPPLE_EPOCH = 946684800; // Unix timestamp of XRPL epoch
 
-// Fixed loan terms — flat 8% origination fee, no amortized interest
-const LOAN_ORIGINATION_FEE_RATE = 0.08; // 8% of principal, deducted upfront
-const LOAN_PAYMENT_TOTAL        = 3;
-const LOAN_PAYMENT_INTERVAL     = 300;  // 5 minutes in seconds (devnet demo)
-const LOAN_GRACE_PERIOD         = 60;   // 1 minute in seconds
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fromRippleEpoch(ts) {
@@ -200,10 +194,6 @@ function roundUpByScale(value, loanScale) {
   const factor = Math.pow(10, -loanScale);
   const result = Math.ceil(value * factor) / factor;
   return result.toFixed(Math.max(0, -loanScale));
-}
-
-function roundUpRLUSD(value) {
-  return (Math.ceil(value * 1e6) / 1e6).toFixed(6);
 }
 
 // ── Loan status helpers ───────────────────────────────────────────────────────
@@ -299,15 +289,6 @@ function computePayment(loan) {
     isLate: false,
     isLast: false,
   };
-}
-
-// ── Client-side periodic payment estimate (for the request form) ──────────────
-// Flat fee model: InterestRate=0 → PeriodicPayment = principal / paymentTotal
-
-function estimateMonthlyPayment(principalStr) {
-  const principal = parseFloat(principalStr);
-  if (!principal || isNaN(principal) || principal <= 0) return null;
-  return principal / LOAN_PAYMENT_TOTAL; // equal installments, fee taken upfront
 }
 
 // ── XRPL fetch helper (via server proxy → local node) ─────────────────────────
@@ -536,195 +517,6 @@ function LoanCard({ loan, borrowerAddress, walletManager, onPaySuccess, healthDa
   );
 }
 
-// ── LoanRequestForm ───────────────────────────────────────────────────────────
-
-function LoanRequestForm({ borrowerAddress, onSuccess }) {
-  const [principal, setPrincipal] = useState("");
-  const [loading,   setLoading]   = useState(false);
-  const [step,      setStep]      = useState("form"); // "form" | "confirm" | "success" | "error"
-  const [prepared,  setPrepared]  = useState(null);   // API preview data before confirm
-  const [result,    setResult]    = useState(null);
-  const [error,     setError]     = useState(null);
-
-  const estimate = estimateMonthlyPayment(principal);
-
-  // Step 1: preview loan terms before requesting
-  async function handleRequest(e) {
-    e.preventDefault();
-    const p = parseFloat(principal);
-    if (!p || p <= 0) { setError("Enter a valid principal amount."); return; }
-    setError(null);
-    // Show confirmation step with estimated terms
-    setPrepared({
-      principal:       p.toFixed(2),
-      originationFee:  roundUpRLUSD(p * LOAN_ORIGINATION_FEE_RATE),
-      amountReceived:  roundUpRLUSD(p * (1 - LOAN_ORIGINATION_FEE_RATE)),
-      monthlyPayment:  estimate ? roundUpRLUSD(estimate) : "—",
-      totalRepayment:  estimate ? roundUpRLUSD(estimate * LOAN_PAYMENT_TOTAL) : "—",
-    });
-    setStep("confirm");
-  }
-
-  // Step 2: actually create the loan on-chain
-  async function handleConfirm() {
-    setLoading(true);
-    setError(null);
-    try {
-      const res  = await fetch("/api/loans/create", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ principalRLUSD: principal, borrowerAddress }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        setError(data.error ?? "Loan creation failed");
-        setStep("form");
-        return;
-      }
-      setResult(data);
-      setStep("success");
-      onSuccess();
-    } catch (err) {
-      setError(err.message);
-      setStep("form");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function reset() {
-    setPrincipal("");
-    setStep("form");
-    setPrepared(null);
-    setResult(null);
-    setError(null);
-  }
-
-  if (step === "success" && result) {
-    return (
-      <div className="rounded-lg border border-green-500/40 bg-green-500/5 p-6 space-y-4">
-        <div>
-          <p className="font-semibold text-green-700 dark:text-green-400">Loan created successfully!</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {prepared?.amountReceived} RLUSD disbursed (after 5% fee). First payment due {fmtDate(result.nextPaymentDueDate)}.
-          </p>
-        </div>
-        <div className="divide-y border rounded-md text-sm">
-          {[
-            ["Loan ID",          result.loanId],
-            ["Monthly payment",  fmtRLUSD(result.periodicPayment)],
-            ["Installments",     `${result.paymentsTotal} × monthly`],
-            ["First due",        fmtDate(result.nextPaymentDueDate)],
-            ["Tx hash",          result.hash],
-          ].map(([k, v]) => (
-            <div key={k} className="flex items-start justify-between px-3 py-2 gap-4">
-              <span className="text-muted-foreground shrink-0">{k}</span>
-              <span className="font-mono text-xs break-all text-right">{v}</span>
-            </div>
-          ))}
-        </div>
-        <Button variant="outline" onClick={reset} className="w-full">Request Another Loan</Button>
-      </div>
-    );
-  }
-
-  if (step === "confirm" && prepared) {
-    return (
-      <div className="rounded-lg border p-6 space-y-4">
-        <div>
-          <p className="font-semibold">Review loan terms</p>
-          <p className="text-sm text-muted-foreground">Confirm the details before submitting</p>
-        </div>
-        <div className="divide-y border rounded-md text-sm">
-          {[
-            ["Principal",         `${prepared.principal} RLUSD`],
-            ["Origination fee",   `5% · ${prepared.originationFee} RLUSD`],
-            ["Amount received",   `${prepared.amountReceived} RLUSD`],
-            ["Installments",      `${LOAN_PAYMENT_TOTAL} × monthly`],
-            ["Monthly payment",   `${prepared.monthlyPayment} RLUSD`],
-            ["Total repayment",   `${prepared.totalRepayment} RLUSD`],
-            ["Grace period",      "7 days per installment"],
-          ].map(([k, v]) => (
-            <div key={k} className="flex items-center justify-between px-3 py-2">
-              <span className="text-muted-foreground">{k}</span>
-              <span className="font-medium">{v}</span>
-            </div>
-          ))}
-        </div>
-        {error && (
-          <p className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">{error}</p>
-        )}
-        <div className="flex gap-3">
-          <Button variant="outline" onClick={() => setStep("form")} disabled={loading} className="flex-1">
-            Back
-          </Button>
-          <Button onClick={handleConfirm} disabled={loading} className="flex-1">
-            {loading ? "Creating loan…" : "Confirm & Create Loan"}
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground text-center">
-          Broker countersigns server-side. Funds disbursed from vault on confirmation.
-        </p>
-      </div>
-    );
-  }
-
-  // Default: form
-  return (
-    <form onSubmit={handleRequest} className="space-y-5">
-      <div className="space-y-2">
-        <Label htmlFor="principal">Principal amount (RLUSD)</Label>
-        <Input
-          id="principal"
-          type="number"
-          min="1"
-          step="0.01"
-          placeholder="e.g. 100"
-          value={principal}
-          onChange={(e) => { setPrincipal(e.target.value); setError(null); }}
-          required
-        />
-      </div>
-
-      {/* Fixed terms */}
-      <div className="rounded-md bg-muted/50 p-4 space-y-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Fixed loan terms</p>
-        <div className="grid grid-cols-2 gap-y-2 text-sm">
-          {[
-            ["Origination fee", "5% flat (deducted upfront)"],
-            ["Installments",    "3 monthly payments"],
-            ["Payment type",    "Equal installments"],
-            ["Grace period",    "7 days / installment"],
-          ].map(([k, v]) => (
-            <div key={k}>
-              <p className="text-xs text-muted-foreground">{k}</p>
-              <p className="font-medium">{v}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Live estimate */}
-      {estimate && (
-        <div className="rounded-md border border-dashed p-4 space-y-1">
-          <p className="text-xs text-muted-foreground">Estimated repayment</p>
-          <p className="text-xl font-semibold">{roundUpRLUSD(estimate)} RLUSD <span className="text-sm font-normal text-muted-foreground">/ month</span></p>
-          <p className="text-xs text-muted-foreground">
-            Total repayment: {roundUpRLUSD(estimate * LOAN_PAYMENT_TOTAL)} RLUSD
-            {" · "}Origination fee: {roundUpRLUSD(parseFloat(principal) * LOAN_ORIGINATION_FEE_RATE)} RLUSD
-          </p>
-        </div>
-      )}
-
-      {error && (
-        <p className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">{error}</p>
-      )}
-
-      <Button type="submit" className="w-full">Review Loan Terms</Button>
-    </form>
-  );
-}
-
 // ── Summary strip ─────────────────────────────────────────────────────────────
 
 function SummaryStrip({ loans }) {
@@ -821,10 +613,15 @@ export default function LoansPage() {
               <p className="text-muted-foreground text-sm mt-1">
                 Fixed-term RLUSD loans · Collateralised &amp; standard
                 {xrpUsd && (
-                  <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-foreground/80">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                    XRP/USD: ${xrpUsd.toFixed(4)}
-                  </span>
+                  <>
+                    <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground/70">
+                      XRP accepted as collateral
+                    </span>
+                    <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-foreground/80">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                      XRP/USD: ${xrpUsd.toFixed(4)}
+                    </span>
+                  </>
                 )}
               </p>
             </div>
@@ -857,7 +654,7 @@ export default function LoansPage() {
                   </Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="new">New Loan</TabsTrigger>
+              <TabsTrigger value="new">Request a loan</TabsTrigger>
             </TabsList>
 
             {/* ── My Loans tab ───────────────────────────────────────────────── */}
@@ -940,39 +737,19 @@ export default function LoansPage() {
 
             {/* ── New Loan tab ────────────────────────────────────────────────── */}
             <TabsContent value="new">
-              <div className="space-y-4">
-                {/* Collateral loan CTA */}
-                <div className="rounded-lg border p-5 space-y-3">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <h2 className="font-semibold">Collateralised Loan</h2>
-                      <Badge variant="secondary" className="text-xs">KYC Over-18 required</Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Lock XRP as collateral and borrow RLUSD. Real-time health monitoring via price oracle. Requires a one-time co-signing setup.
-                    </p>
+              <div className="rounded-lg border p-5 space-y-3">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h2 className="font-semibold">Collateralised Loan</h2>
+                    <Badge variant="secondary" className="text-xs">KYC Over-18 required</Badge>
                   </div>
-                  <Link href="/loans/new">
-                    <Button className="w-full">Start collateralised loan →</Button>
-                  </Link>
+                  <p className="text-sm text-muted-foreground">
+                    Lock XRP as collateral and borrow RLUSD. Real-time health monitoring via price oracle. Requires a one-time co-signing setup.
+                  </p>
                 </div>
-
-                {/* Standard (uncollateralised) loan */}
-                <div className="rounded-lg border p-5 space-y-4">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <h2 className="font-semibold">Standard Loan</h2>
-                      <Badge variant="outline" className="text-xs">KYC Full required</Badge>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Uncollateralised fixed-term loan from the RLUSD vault. Broker signs server-side.
-                    </p>
-                  </div>
-                  <LoanRequestForm
-                    borrowerAddress={address}
-                    onSuccess={refetch}
-                  />
-                </div>
+                <Link href="/loans/new">
+                  <Button className="w-full">Start collateralised loan →</Button>
+                </Link>
               </div>
             </TabsContent>
           </Tabs>
