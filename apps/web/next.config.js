@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
+  reactStrictMode: false,
   // Empty turbopack config to allow webpack config to work with Next.js 16+
   turbopack: {},
   webpack: (config, { isServer }) => {

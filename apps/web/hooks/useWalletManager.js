@@ -41,7 +41,7 @@ export function useWalletManager() {
 
         const manager = new WalletManager({
           adapters,
-          network: "testnet",
+          network: "devnet",
           autoConnect: true,
           logger: { level: "info" },
         });
@@ -91,10 +91,19 @@ export function useWalletManager() {
       const wallet = manager.wallet;
 
       if (account && wallet) {
-        setAccountInfo({
-          address: account.address,
-          network: `${account.network.name} (${account.network.id})`,
-          walletName: wallet.name,
+        const nextAddress    = account.address;
+        const nextNetwork    = `${account.network.name} (${account.network.id})`;
+        const nextWalletName = wallet.name;
+        setAccountInfo((prev) => {
+          if (
+            prev &&
+            prev.address    === nextAddress &&
+            prev.network    === nextNetwork &&
+            prev.walletName === nextWalletName
+          ) {
+            return prev; // same ref → no re-render
+          }
+          return { address: nextAddress, network: nextNetwork, walletName: nextWalletName };
         });
       }
     } else {

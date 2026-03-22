@@ -3,6 +3,9 @@
 import { useEffect, useRef } from "react";
 import { useWallet } from "../components/providers/WalletProvider";
 
+// Track managers whose signAndSubmit has already been patched
+const patchedManagers = new WeakSet();
+
 export function useWalletConnector(walletManager) {
   const walletConnectorRef = useRef(null);
   const { addEvent, showStatus } = useWallet();
@@ -22,6 +25,22 @@ export function useWalletConnector(walletManager) {
         typeof walletConnectorRef.current.setWalletManager === "function"
       ) {
         walletConnectorRef.current.setWalletManager(walletManager);
+
+        // Auto-close the Xaman popup once a tx is signed/rejected
+        if (!patchedManagers.has(walletManager) && typeof walletManager.signAndSubmit === "function") {
+          patchedManagers.add(walletManager);
+          const _orig = walletManager.signAndSubmit.bind(walletManager);
+          walletManager.signAndSubmit = async (tx) => {
+            try {
+              const result = await _orig(tx);
+              walletConnectorRef.current?.close();
+              return result;
+            } catch (err) {
+              walletConnectorRef.current?.close();
+              throw err;
+            }
+          };
+        }
 
         // Listen to connector events
         const handleConnecting = (e) => {

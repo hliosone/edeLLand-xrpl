@@ -1,0 +1,38 @@
+[
+  {
+    "address": "r3mJFoRbz1GNiqzpZBkMeoaQJkHqCNSn2D",
+    "label": "OFAC SDN — Lazarus Group affiliated",
+    "source": "OFAC",
+    "addedAt": "2024-01-15"
+  },
+  {
+    "address": "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+    "label": "OFAC SDN — Tornado Cash related",
+    "source": "OFAC",
+    "addedAt": "2024-03-02"
+  },
+  {
+    "address": "rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe",
+    "label": "Internal AML — High-risk mixer activity",
+    "source": "INTERNAL",
+    "addedAt": "2024-06-10"
+  },
+  {
+    "address": "rN7n3473SaZBCG4dFL75SZkdgu5THyYveL",
+    "label": "OFAC SDN — DPRK sanctions",
+    "source": "OFAC",
+    "addedAt": "2024-09-22"
+  },
+  {
+    "address": "rUpy3eEg8rqjqGeNyfzdcs4cZNtJJWzsj1",
+    "label": "Internal AML — Structuring pattern detected",
+    "source": "INTERNAL",
+    "addedAt": "2025-01-08"
+  },
+  {
+    "address": "rULt9gCEsHhFEQXWGoMT9JHDqiFxQMrsHg",
+    "label": "OFAC SDN — Sanctioned cryptocurrency exchange",
+    "source": "OFAC",
+    "addedAt": "2025-02-14"
+  }
+]

@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "init:env": "node scripts/setup/index.mjs",
+    "lending": "node scripts/lending-protocol/index.mjs",
+    "faucet": "node scripts/local-faucet.mjs"
   },
   "dependencies": {
     "buffer": "^6.0.3",
@@ -21,7 +24,8 @@
     "react-dom": "^18.2.0",
     "stream-browserify": "^3.0.0",
     "tailwind-merge": "^3.4.0",
-    "xrpl": "^3.0.0",
+    "qrcode": "^1.5.4",
+    "xrpl": "^4.6.0",
     "xrpl-connect": "^0.6.0"
   },
   "devDependencies": {
